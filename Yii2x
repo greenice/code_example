@@ -1,0 +1,136 @@
+<?php
+namespace common\models;
+ 
+use Yii;
+use yii\db\ActiveRecord;
+use yii\db\Expression;
+ 
+class AuthService extends ActiveRecord
+{
+    const SERVICE_NAME_GOOGLE = 'google';
+    const SERVICE_NAME_FACEBOOK = 'facebook';
+    const SERVICE_NAME_TWITTER = 'twitter';
+    const SERVICE_NAME_MS_LIVE = 'live';
+    const SERVICE_NAME_WECHAT_WORK = 'wechatwork';
+ 
+    const UntrustedParameters = [
+        self::SERVICE_NAME_WECHAT_WORK => ['email']
+    ];
+ 
+    const WECHAT_WORK_USER_EMAIL_DOMAIN = env('WECHAT_WORK_USER_EMAIL_DOMAIN', '@wechatwork.local');
+ 
+    /**
+     * @inheritdoc
+     */
+    public static function tableName()
+    {
+        return '{{auth_services}}';
+    }
+ 
+    /**
+     * @inheritdoc
+     */
+    public function rules()
+    {
+        return [
+            [['service_name', 'service_id', 'service_email'], 'string'],
+        ];
+    }
+ 
+    public function behaviors()
+    {
+        return [
+            'timestamp' => [
+                'class' => 'yii\behaviors\TimestampBehavior',
+                'attributes' => [
+                    self::EVENT_BEFORE_INSERT => ['created_at', 'updated_at'],
+                    self::EVENT_BEFORE_UPDATE => 'updated_at',
+                ],
+                'value' => function () {
+                    return new Expression('CURRENT_TIMESTAMP');
+                }
+            ],
+        ];
+    }
+ 
+    public function getUser()
+    {
+        return $this->hasOne(\backend\models\User::className(), ['id' => 'user_id']);
+    }
+ 
+    public static function getService(string $serviceName, string $serviceId)
+    {
+        $authService = self::findOne([
+            'service_name' => $serviceName,
+            'service_id' => $serviceId
+        ]);
+        return $authService;
+    }
+ 
+    public static function getUserByService(string $serviceName, string $serviceId)
+    {
+        $authService = self::getService($serviceName, $serviceId);
+        if (!empty($authService)) {
+            return $authService->user;
+        }
+        return null;
+    }
+ 
+    public static function setService($params)
+    {
+        $user = self::getUserByService($params['serviceName'], $params['serviceId']);
+        if (empty($user)) {
+            $authService = new AuthService();
+            $authService->service_name = $params['serviceName'];
+            $authService->service_id = $params['serviceId'];
+            $authService->service_email = $params['serviceEmail'] ?? '';
+            $authService->user_id = $params['userId'];
+            return $authService->save();
+        }
+        return false;
+    }
+ 
+    public static function removeService(string $serviceName, int $userId)
+    {
+        if ($authService = self::findOne(['user_id' => $userId, 'service_name' => $serviceName])) {
+            return $authService->delete();
+        }
+        return false;
+    }
+ 
+    public static function removeAllServices(int $userId)
+    {
+        return self::deleteAll(['user_id' => $userId]);
+    }
+ 
+    public static function checkService(string $serviceName, int $userId)
+    {
+        if ($authService = self::findOne(['user_id' => $userId, 'service_name' => $serviceName])) {
+            return true;
+        }
+        return false;
+    }
+ 
+    public static function isUntrustedParameter($serviceName, $parameter)
+    {
+        $result = false;
+        if (!empty(self::UntrustedParameters[$serviceName])) {
+            foreach (self::UntrustedParameters[$serviceName] as $param) {
+                $result = $result || ($parameter === $param);
+            }
+        }
+        return $result;
+    }
+ 
+    public static function isTrustedParameter($serviceName, $parameter)
+    {
+        return !self::isUntrustedParameter($serviceName, $parameter);
+    }
+ 
+    public static function generateWechatWorkEmail($mobile)
+    {
+        $mobile = trim(str_replace(['+', '(', ')'], '', $mobile));
+        return $mobile . '@' . self::WECHAT_WORK_USER_EMAIL_DOMAIN;
+    }
+}
+ 
